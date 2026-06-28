@@ -1,6 +1,2 @@
-openai-whisper
-gTTS
-moviepy
-transformers
-gradio
-torch
+streamlit
+
