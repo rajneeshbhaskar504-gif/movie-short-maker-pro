@@ -1,79 +1,72 @@
+import streamlit as st
+import subprocess
 import os
-import whisper
-from gtts import gTTS
-from moviepy import VideoFileClip, AudioFileClip
-from transformers import pipeline
-import gradio as gr
 
-def video_to_text(video_path):
-    print("1. Video se audio aur text nikal raha hai...")
-    video = VideoFileClip(video_path)
-    audio_path = "temp_audio.mp3"
-    video.audio.write_audiofile(audio_path, bitrate="64k", logger=None)
+# Streamlit Page Design
+st.set_page_config(page_title="Rajneesh Movie Pro", layout="wide", page_icon="🎬")
+st.title("🎬 Rajneesh Bhaskar - Professional Shorts Creator")
+st.write("Apni video upload karein aur purane logos ko remove karke professional layout banayein.")
+
+LOGO_FILE = "1642.jpg"
+
+uploaded_file = st.file_uploader("Video File Upload Karein", type=['mp4', 'mkv'])
+
+if uploaded_file:
+    st.sidebar.header("✍️ Text Customization")
+    # Yahan aap apni movie ke hisab se text likh sakte hain
+    line1 = st.sidebar.text_input("Top Line (Yellow Text)", "Pehli Line Likhein")
+    line2 = st.sidebar.text_input("Bottom Line (White Text)", "Doosri Line Likhein")
     
-    model = whisper.load_model("tiny", device="cpu")
-    result = model.transcribe(audio_path, language="hi")
-    return result["text"]
-
-def generate_viral_script(full_transcript):
-    print("2. AI Script generate kar raha hai...")
-    if not full_transcript.strip():
-        return "Dosto, aaj ki video bohot mazaedar hone wali hai, ise poora dekhein!"
+    if st.button("🚀 Process & Remove Old Logos"):
+        input_p = "input_temp.mp4"
+        output_p = "rajneesh_final_clean.mp4"
         
-    pipe = pipeline("text-generation", model="Qwen/Qwen1.5-0.5B-Chat", device="cpu")
-    prompt = f"<|im_start|>system\nAap ek Reels creator hain. Niche di gayi movie transcript se ek lamba, suspenseful aur viral Hindi voiceover script likhein jo lagbhag 80 se 90 seconds tak chale.<|im_end|>\n<|im_start|>user\nTranscript: {full_transcript}<|im_end|>\n<|im_start|>assistant\n"
-    
-    outputs = pipe(prompt, max_new_tokens=300, do_sample=True, temperature=0.7)
-    generated_text = outputs[0]["generated_text"].split("<|im_start|>assistant\n")[-1]
-    return generated_text
+        # Uploaded file ko local disk par save karna
+        with open(input_p, "wb") as f:
+            f.write(uploaded_file.read())
+        
+        with st.spinner("Processing... Purane logos ko kaat kar naya layout banaya ja raha hai..."):
+            # Linux server par standard font path
+            font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+            
+            # MASTER LOGIC FOR CLEANING:
+            # - hflip: Copyright shield ke liye video mirror karega
+            # - crop=iw:ih-240:0:120: Upar aur niche se 120-120px permanently cut (Purana logo gayab!)
+            # - scale=720:-1: Video width ko 720px sharp karega
+            # - pad=720:1280...: Nayi solid black patti lagayega shorts ke liye
+            clean_vf = (
+                f"hflip,crop=iw:ih-240:0:120,scale=720:-1,pad=720:1280:(ow-iw)/2:(oh-ih)/2:black,"
+                f"drawtext=text='{line1}':fontfile={font_path}:fontcolor=yellow:fontsize=45:x=(w-text_w)/2:y=140:shadowcolor=black:shadowx=2:shadowy=2,"
+                f"drawtext=text='{line2}':fontfile={font_path}:fontcolor=white:fontsize=45:x=(w-text_w)/2:y=200:shadowcolor=black:shadowx=2:shadowy=2"
+            )
+            
+            # Niche ka watermark
+            footer_text = f"drawtext=text='Rajneesh Bhaskar':fontfile={font_path}:fontcolor=white@0.4:fontsize=28:x=(w-text_w)/2:y=h-130"
 
-def text_to_voice(hindi_text):
-    print("3. Voiceover taiyar ho raha hai...")
-    tts = gTTS(text=hindi_text, lang='hi', slow=False)
-    voice_path = "ai_voiceover.mp3"
-    tts.save(voice_path)
-    return voice_path
+            # Check if your logo exists
+            if os.path.exists(LOGO_FILE):
+                logo_proc = "scale=85:85,format=rgba,geq=r='r(X,Y)':a='if(gt(hypot(X-W/2,Y-H/2),W/2),0,255)'"
+                cmd = [
+                    'ffmpeg', '-y', '-i', input_p, '-i', LOGO_FILE,
+                    '-filter_complex', f"[0:v]{clean_vf},{footer_text}[v1];[1:v]{logo_proc}[logo];[v1][logo]overlay=W-w-35:35",
+                    '-af', "atempo=1.06",
+                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-pix_fmt', 'yuv420p',
+                    output_p
+                ]
+            else:
+                cmd = ['ffmpeg', '-y', '-i', input_p, '-vf', f"{clean_vf},{footer_text}", '-af', "atempo=1.06", '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', output_p]
+            
+            # Running FFmpeg command safely
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if os.path.exists(output_p):
+                st.success("✅ Video Taiyar! Purane saare logos hat chuke hain.")
+                with open(output_p, "rb") as f:
+                    st.download_button("📥 Download Clean Video", f, "rajneesh_pro_short.mp4")
+            else:
+                st.error("Processing mein dikkat aayi! FFmpeg Log niche dekhein:")
+                st.code(res.stderr)
+        
+        # Temp files clear karna taaki server crash na ho
+        if os.path.exists(input_p): os.remove(input_p)
 
-def make_final_short(video_path, ai_voice_path):
-    print("4. Video cutting aur Copyright Shield apply ho raha hai...")
-    clip = VideoFileClip(video_path)
-    audio_clip = AudioFileClip(ai_voice_path)
-    
-    duration = min(90, audio_clip.duration, clip.duration)
-    short_clip = clip.subclip(0, duration)
-    
-    w, h = short_clip.size
-    target_w = int(h * 9 / 16)
-    x_center = w / 2
-    crop_clip = short_clip.crop(x_center=x_center, width=target_w, height=h)
-    
-    # Copyright Shield (Zoom 5% + Mirror)
-    final_clip = crop_clip.fx(lambda c: c.resize(1.05)).fx(lambda c: c.mirrorx())
-    
-    final_clip = final_clip.set_audio(audio_clip.set_duration(duration))
-    output_path = "viral_short_output.mp4"
-    
-    final_clip.write_videofile(output_path, codec="libx264", audio_codec="aac", preset="ultrafast", logger=None, threads=2)
-    print("🎯 Video Taiyar Hai!")
-    return output_path
-
-def start_processing(video_file):
-    try:
-        transcript = video_to_text(video_file)
-        hindi_script = generate_viral_script(transcript)
-        voice_path = text_to_voice(hindi_script)
-        final_video = make_final_short(video_file, voice_path)
-        return final_video
-    except Exception as e:
-        print(f"Error: {e}")
-        return None
-
-with gr.Blocks() as demo:
-    gr.Markdown("# 🎬 GitHub Codespaces Powered - AI Movie Explainer")
-    with gr.Row():
-        input_video = gr.Video(label="6 Minute Tak Ki Movie Clip Dalein")
-        output_video = gr.Video(label="Aapka AI 90-Sec Video Taiyar Hai")
-    btn = gr.Button("Generate Viral Video 🚀")
-    btn.click(fn=start_processing, inputs=input_video, outputs=output_video)
-
-demo.queue().launch(share=True)
